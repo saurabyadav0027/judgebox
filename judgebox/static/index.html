@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JudgeBox</title>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --text:#1a1a1a; --muted:#666; --border:#ddd; --accent:#2457c5; --ok:#1d7a3e; --bad:#b42318; --warn:#a15c00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141518; --card:#1e2024; --text:#ececec; --muted:#9a9a9a; --border:#33363c; --accent:#6c9cff; --ok:#4cc27a; --bad:#ff6b5e; --warn:#f0a83a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); }
+  label { display:block; font-weight:600; margin: 14px 0 6px; }
+  textarea { width:100%; font: 13px/1.4 ui-monospace, Menlo, monospace; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px; resize: vertical; }
+  .tests { display:grid; gap:10px; }
+  .test { display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:start; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px; }
+  .test textarea { min-height: 60px; }
+  @media (max-width: 600px) { .test { grid-template-columns: 1fr; } }
+  button { font: inherit; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); padding:8px 14px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  .row { display:flex; gap:10px; margin-top:14px; flex-wrap: wrap; }
+  #summary { margin-top: 20px; font-weight: 700; font-size: 17px; }
+  table { width:100%; border-collapse: collapse; margin-top: 10px; background:var(--card); border-radius:8px; overflow:hidden; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align: top; font-size: 14px; }
+  td pre { margin:0; white-space: pre-wrap; font: 12px ui-monospace, Menlo, monospace; }
+  .ACCEPTED { color: var(--ok); font-weight:700; }
+  .WRONG_ANSWER, .RUNTIME_ERROR { color: var(--bad); font-weight:700; }
+  .TIME_LIMIT_EXCEEDED { color: var(--warn); font-weight:700; }
+  .muted { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>JudgeBox</h1>
+  <p class="sub">Paste a Python solution, add test cases, and run it. Each test gets a verdict.</p>
+
+  <label for="code">Solution (Python)</label>
+  <textarea id="code" rows="10">a, b = map(int, input().split())
+print(a + b)</textarea>
+
+  <label>Test cases</label>
+  <div class="tests" id="tests"></div>
+  <div class="row">
+    <button type="button" id="add">+ Add test</button>
+    <button type="button" class="primary" id="run">Run tests</button>
+  </div>
+
+  <div id="summary"></div>
+  <div id="results"></div>
+</main>
+<script>
+  const testsEl = document.getElementById("tests");
+
+  function addTest(input = "", expected = "") {
+    const div = document.createElement("div");
+    div.className = "test";
+    div.innerHTML = `
+      <div><div class="muted">Input</div><textarea class="in"></textarea></div>
+      <div><div class="muted">Expected output</div><textarea class="out"></textarea></div>
+      <button type="button" title="Remove test">✕</button>`;
+    div.querySelector(".in").value = input;
+    div.querySelector(".out").value = expected;
+    div.querySelector("button").onclick = () => div.remove();
+    testsEl.appendChild(div);
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  async function run() {
+    const tests = [...testsEl.querySelectorAll(".test")].map(t => ({
+      input: t.querySelector(".in").value,
+      expected_output: t.querySelector(".out").value,
+    }));
+    const summary = document.getElementById("summary");
+    const results = document.getElementById("results");
+    if (!tests.length) { summary.textContent = "Add at least one test."; results.innerHTML = ""; return; }
+    summary.textContent = "Running…";
+    results.innerHTML = "";
+    try {
+      const res = await fetch("/judge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_code: document.getElementById("code").value, tests }),
+      });
+      const data = await res.json();
+      if (!res.ok) { summary.textContent = "Request error: " + JSON.stringify(data.detail); return; }
+      summary.textContent = `${data.passed} / ${data.total} tests passed`;
+      results.innerHTML = `<table><thead><tr><th>#</th><th>Verdict</th><th>Time</th><th>Expected</th><th>Got</th></tr></thead><tbody>${
+        data.results.map(r => `<tr>
+          <td>${r.index}</td>
+          <td class="${r.verdict}">${r.verdict.replace(/_/g, " ")}</td>
+          <td>${r.time_ms} ms</td>
+          <td><pre>${escapeHtml(r.expected_output)}</pre></td>
+          <td><pre>${escapeHtml(r.actual_output)}${r.error ? "\n" + escapeHtml(r.error) : ""}</pre></td>
+        </tr>`).join("")
+      }</tbody></table>`;
+    } catch (e) {
+      summary.textContent = "Could not reach the server.";
+    }
+  }
+
+  document.getElementById("add").onclick = () => addTest();
+  document.getElementById("run").onclick = run;
+  addTest("2 3", "5");
+  addTest("-4 10", "6");
+</script>
+</body>
+</html>
